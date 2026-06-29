@@ -1,0 +1,21 @@
+# Python Virtual Environments
+venv/
+env/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Generated Offline Matrices
+*_cycle_*/
+*.npz
+*.npy
+
+# 1. Ignore ALL csvs and pngs everywhere by default (keeps root clean)
+*.csv
+*.png
+
+# 2. BUT explicitly allow Git to track the official folder!
+!final_results/
+!final_results/*.csv
+!final_results/*.png

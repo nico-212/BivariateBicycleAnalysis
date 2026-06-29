@@ -1,0 +1,6 @@
+numpy
+scipy
+tqdm
+stim
+bposd
+ldpc
