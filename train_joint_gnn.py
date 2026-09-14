@@ -3,7 +3,11 @@
 
 Synthesizes training batches on the fly with randomized physical error 
 rates (p_batch ~ U(p_min, p_max)). Uses offline artifacts to map full 
-joint syndromes to fault priors.
+joint syndromes to fault priors. 
+
+Uses unweighted BCE Loss to learn true marginal probabilities, providing 
+a sparse, high-quality prior that naturally supports Belief Propagation 
+convergence without overconfidence.
 """
 
 import argparse
@@ -36,16 +40,16 @@ DEFAULT_P_MIN, DEFAULT_P_MAX = 0.001, 0.01
 
 if hasattr(torch, "xpu") and torch.xpu.is_available():
     device = torch.device("xpu")
-    use_amp = True
-    amp_dtype = torch.bfloat16
+    use_amp = False
+    amp_dtype = torch.float32
 elif torch.cuda.is_available():
     device = torch.device("cuda:0")
     use_amp = False
-    amp_dtype = torch.float16
+    amp_dtype = torch.float32
 else:
     device = torch.device("cpu")
     use_amp = False
-    amp_dtype = torch.bfloat16
+    amp_dtype = torch.float32
 
 
 def free_memory_bytes():
@@ -85,7 +89,7 @@ def main(argv=None):
     ap.add_argument("--cycles", type=int, default=6)
     ap.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
     ap.add_argument("--batches-per-epoch", type=int, default=DEFAULT_BATCHES_PER_EPOCH)
-    ap.add_argument("--batch", type=int, default=None,
+    ap.add_argument("--batch", "--gnn-batch", dest="batch", type=int, default=None,
                     help="Shots per training batch. Auto-scales down for large fault spaces if omitted.")
     ap.add_argument("--p-min", type=float, default=DEFAULT_P_MIN)
     ap.add_argument("--p-max", type=float, default=DEFAULT_P_MAX)
@@ -115,7 +119,6 @@ def main(argv=None):
 
     n_det, n_fault = d_joint.shape
 
-    # Auto-scale batch size and accumulation steps to prevent OOM on large codes
     if args.batch is not None:
         batch_size, accum_steps = args.batch, DEFAULT_ACCUM_STEPS
     else:
@@ -141,7 +144,10 @@ def main(argv=None):
 
     optimizer = optim.AdamW(model.parameters(), lr=DEFAULT_LR, weight_decay=DEFAULT_WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
+    
+    # Standard, unweighted BCE Loss
     criterion = nn.BCEWithLogitsLoss()
+
     scaler = torch.amp.GradScaler(device.type, enabled=use_amp)
 
     weights_dir = f"weights{args.code}"
