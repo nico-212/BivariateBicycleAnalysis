@@ -5,14 +5,6 @@ import itertools
 import multiprocessing
 import os
 import time
-
-# Force single-threaded linear algebra to prevent multiprocessing thrashing
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-
 import numpy as np
 import scipy.sparse as sparse
 import stim
@@ -23,7 +15,13 @@ from decoders import RELAYBP_PRESETS, WorkerConfig, decode_shot_pair, init_worke
 from gnn_runtime import (device, load_gnn_models, load_priors_chunk,
                          project_priors, release_memory,
                          run_gnn_inference_pair, save_priors_chunk)
-
+                         
+# Force single-threaded linear algebra to prevent multiprocessing thrashing
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -59,7 +57,7 @@ def parse_args(argv=None):
     if args.cycles is None:
         args.cycles = 12 if args.code == 144 else 6
     if args.max_iter is None:
-        args.max_iter = 1000 if args.backend == "relay" or args.decoder == "bposd" else 0
+        .max_iter = 100 if args.decoder == "gnn" else 1000
 
     if args.relay_preset == "auto":
         args.relay_preset = "paper_bb144" if args.code == 144 else "paper_bb72"
