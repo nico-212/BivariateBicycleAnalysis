@@ -1,6 +1,15 @@
+# --- Core Math & Data ---
 numpy
 scipy
-tqdm
+pandas
+
+# --- Quantum Error Correction ---
 stim
 bposd
 ldpc
+PyMatching
+relay-bp
+
+# --- Machine Learning ---
+torch
+tqdm
