@@ -26,7 +26,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--code", type=int, choices=sorted(CODE_PARAMS), default=72)
-    parser.add_argument("--p", type=float, default=0.003)
+    parser.add_argument("--p", type=float, default=0.005)
     parser.add_argument("--cycles", type=int, default=None)
 
     parser.add_argument("--decoder", type=str, choices=("gnn", "bposd"), default="gnn")
@@ -37,7 +37,7 @@ def parse_args(argv=None):
     parser.add_argument("--max-iter", type=int, default=None)
     parser.add_argument("--relay-preset", type=str, default="auto", choices=("auto",) + tuple(sorted(RELAYBP_PRESETS)))
 
-    parser.add_argument("--gnn-batch", type=int, default=(64 if device.type in ("xpu", "cuda") else 128))
+    parser.add_argument("--gnn-batch", type=int, default=32)
     parser.add_argument("--h-dim", type=int, default=16)
     parser.add_argument("--num-layers", type=int, default=2)
     parser.add_argument("--weights-z", type=str, default=None)
@@ -57,7 +57,7 @@ def parse_args(argv=None):
     if args.cycles is None:
         args.cycles = 12 if args.code == 144 else 6
     if args.max_iter is None:
-        .max_iter = 100 if args.decoder == "gnn" else 1000
+        args.max_iter = 100 if args.decoder == "gnn" else 1000
 
     if args.relay_preset == "auto":
         args.relay_preset = "paper_bb144" if args.code == 144 else "paper_bb72"
@@ -80,7 +80,6 @@ def parse_args(argv=None):
 def load_artifacts(args):
     data_dir = artifact_dir(args.code, args.p, args.cycles)
     
-    # Synced filenames to match the newly refactored offline_stage.py
     files = {key: f"{data_dir}/{fname}" for key, fname in dict(
         D_joint_Z="D_joint_Z.npz", D_joint_X="D_joint_X.npz",
         joint_dem_Z="dem_joint_Z.dem", joint_dem_X="dem_joint_X.dem",
@@ -245,7 +244,6 @@ def run_trials(args, artifacts, models):
                     dbar.update(1)
             metrics["decode_time_s"] += time.perf_counter() - t0
 
-            # --- Live Chunk Progress ---
             done = min(args.trials, (chunk + 1) * args.chunk)
             print(f"  ↳ Cumulative P_L (Union): "
                   f"{metrics['union_err']}/{done} "
@@ -278,7 +276,6 @@ def report_and_save_results(args, artifacts, m, total_time_s):
     print(f"Time: GNN {m['gnn_time_s']:.1f}s | Decode {m['decode_time_s']:.1f}s | Total {total_time_s:.1f}s")
     print(f"Throughput: {throughput:.2f} shot/s (Decode only: {decode_tp:.2f} shot/s)")
 
-    # CSV Append
     header = ("decoder,n,k,d,p,num_cycles,trials,osd_order,lsd_order,"
               "relay_preset,bp_max_iter,gnn_layers,gnn_hdim,"
               "logical_errors,P_L,converged_Z,converged_X,converged_both,"
