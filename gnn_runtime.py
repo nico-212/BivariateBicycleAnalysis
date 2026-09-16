@@ -7,14 +7,6 @@ over Z/X memories, and projecting joint faults down to graded per-basis priors.
 
 import gc
 import os
-
-# Restrict BLAS threads to prevent multiprocessing CPU thrashing
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -25,6 +17,13 @@ try:
     import intel_extension_for_pytorch
 except ImportError:
     pass
+
+# Restrict BLAS threads to prevent multiprocessing CPU thrashing
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 # Hardware detection and mixed precision setup
 if hasattr(torch, "xpu") and torch.xpu.is_available():
