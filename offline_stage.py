@@ -8,6 +8,7 @@ Routing consistency is verified automatically during generation (disable with --
 
 import argparse
 import os
+import sys
 
 import numpy as np
 import scipy.sparse as sparse
@@ -246,7 +247,7 @@ def build_stim_circuit(code, p, cycles, is_z_memory, both_halves=False):
 def extract_matrices(dem: stim.DetectorErrorModel):
     """Extracts parity (D), logical (DL) matrices, and priors from a Stim DEM.
     
-    Faults with identical detector and observable footprints are merged into a 
+    Faults that flip the same detectors and observables are merged into a 
     single column using XOR probability to ensure unambiguous routing.
     """
     d_rows, d_cols = [], []
@@ -303,7 +304,7 @@ def extract_matrices(dem: stim.DetectorErrorModel):
 def build_route_projection(d_joint, d_split, split_rows):
     """Builds a sparse projection matrix mapping joint faults to their split equivalents.
     
-    Matches faults based on their exact detector footprint. Joint faults with no 
+    Matches faults by the detectors they flip. Joint faults with no 
     detectors on the split half are ignored.
     """
     d_split = d_split.tocsc()
@@ -312,28 +313,28 @@ def build_route_projection(d_joint, d_split, split_rows):
     n_joint_faults = sliced_joint.shape[1]
     n_split_faults = d_split.shape[1]
     
-    # Step 1: Catalog the exact detector footprint of every split fault
-    split_footprints = {}
+    # Step 1: Catalog the exact detector set of every split fault
+    split_detectors = {}
     for split_col in range(n_split_faults):
         
-        footprint = tuple(d_split[:, split_col].indices)
+        detectors = tuple(d_split[:, split_col].indices)
 
-        assert footprint not in split_footprints, f"Duplicate footprint at col {split_col}"
-        split_footprints[footprint] = split_col
+        assert detectors not in split_detectors, f"Duplicate detector set at col {split_col}"
+        split_detectors[detectors] = split_col
 
     # Step 2: Match every joint fault to its corresponding split fault
     joint_indices = []
     split_indices = []
     
     for joint_col in range(n_joint_faults):
-        footprint = tuple(sliced_joint[:, joint_col].indices)
+        detectors = tuple(sliced_joint[:, joint_col].indices)
         
-        if not footprint:
+        if not detectors:
             continue
             
-        if footprint in split_footprints:
+        if detectors in split_detectors:
             joint_indices.append(joint_col)
-            split_indices.append(split_footprints[footprint])
+            split_indices.append(split_detectors[detectors])
 
     # Step 3: Construct the mapping matrix
     ones = np.ones(len(joint_indices), dtype=np.uint8)
@@ -345,12 +346,16 @@ def build_route_projection(d_joint, d_split, split_rows):
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--code", type=int, choices=sorted(CODE_PARAMS), default=72)
-    parser.add_argument("--p", type=float, default=0.005)
-    parser.add_argument("--cycles", type=int, default=6)
+    parser.add_argument("--p", type=float, default=0.004)
+    parser.add_argument("--cycles", type=int, default=None)
     parser.add_argument("--verify", dest="verify", action="store_true", default=True,
                         help="run the route-consistency checks on built artifacts (default)")
     parser.add_argument("--no-verify", dest="verify", action="store_false")
     args = parser.parse_args(argv)
+
+    # Same resolution as online_stage.py, so both stages land on one directory.
+    if args.cycles is None:
+        args.cycles = 12 if args.code == 144 else 6
 
     code = BBCode(args.code)
     out_dir = artifact_dir(args.code, args.p, args.cycles)
@@ -360,11 +365,11 @@ def main(argv=None):
 
     # Per-basis artifacts (graded half only)
     dx_circuit = build_stim_circuit(code, args.p, args.cycles, is_z_memory=False)
-    dem_X = dx_circuit.detector_error_model(approximate_disjoint_errors=True, ignore_decomposition_failures=True)
+    dem_X = dx_circuit.detector_error_model()
     DX, DL_X, probX = extract_matrices(dem_X)
 
     dz_circuit = build_stim_circuit(code, args.p, args.cycles, is_z_memory=True)
-    dem_Z = dz_circuit.detector_error_model(approximate_disjoint_errors=True, ignore_decomposition_failures=True)
+    dem_Z = dz_circuit.detector_error_model()
     DZ, DL_Z, probZ = extract_matrices(dem_Z)
 
     expected_detectors = code.n2 * (args.cycles + 2)
@@ -397,7 +402,7 @@ def main(argv=None):
         print(f"Build Joint {basis} | {basis}-memory")
         
         circuit = build_stim_circuit(code, args.p, args.cycles, is_z_memory=is_z, both_halves=True)
-        dem = circuit.detector_error_model(approximate_disjoint_errors=True, ignore_decomposition_failures=True)
+        dem = circuit.detector_error_model()
         
         expected_joint_detectors = 2 * code.n2 * c_total
         assert dem.num_detectors == expected_joint_detectors, (dem.num_detectors, expected_joint_detectors)
@@ -420,10 +425,15 @@ def main(argv=None):
         print(f"Saved joint_{basis}: dem/D/prob/R/circuit")
 
     if args.verify:
+        # The regression test lives next to this script. Put that directory first
+        # on the path, so the copy that is imported is the one shipped here,
+        # whatever the working directory is.
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         try:
             from tests.test_offline_stage import check_routes
         except ImportError as exc:
             print(f"WARN: verification skipped (import tests.test_offline_stage failed: {exc})")
+            print("WARN: keep tests/ next to offline_stage.py, or pass --no-verify to silence this")
         else:
             print("Verify: route checks ...")
             if not check_routes(out_dir, args.code, args.cycles):

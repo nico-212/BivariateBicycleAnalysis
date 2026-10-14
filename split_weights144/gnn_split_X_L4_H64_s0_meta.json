@@ -1,0 +1,23 @@
+{
+  "code": 144,
+  "p": 0.003,
+  "cycles": 12,
+  "basis": "X",
+  "epochs": 20,
+  "batches_per_epoch": 1200,
+  "batch": null,
+  "p_min": 0.001,
+  "p_max": 0.01,
+  "num_layers": 4,
+  "h_dim": 64,
+  "seed": 0,
+  "n_det": 1008,
+  "n_fault": 8784,
+  "n_params": 628929,
+  "batch_size": 16,
+  "accum_steps": 4,
+  "best_loss": 0.0179244000223116,
+  "train_seconds": 1703.151982307434,
+  "device": "xpu",
+  "data_dir": "144_12_12_cycle_12/p_0.003"
+}

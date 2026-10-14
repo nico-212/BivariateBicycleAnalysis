@@ -1,15 +1,23 @@
-# --- Core Math & Data ---
-numpy
-scipy
-pandas
+# Pinned to the environment behind the thesis: CPython 3.14.7, the versions that
+# matter for a rerun (Table A.1). Newer Python versions may not have wheels for
+# these releases.
+numpy==2.5.2
+scipy==1.18.0
+pandas==3.0.5
 
-# --- Quantum Error Correction ---
-stim
-bposd
-ldpc
-PyMatching
-relay-bp
+stim==1.16.0
+bposd==2.1
+ldpc==2.4.1
 
-# --- Machine Learning ---
-torch
-tqdm
+torch==2.13.0
+
+matplotlib==3.11.1
+tqdm==4.70.0
+
+# Only diamonds.py needs this, and diamonds.py is not part of the pipeline.
+pdfplumber==0.11.10
+
+# The Relay-BP baseline. Its wheels are manylinux only, so the line stays off by
+# default. Uncomment it on Linux, or run the Relay-BP arm under WSL2 on Windows.
+# The other backends do not need it.
+# relay-bp==0.2.2

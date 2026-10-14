@@ -1,22 +1,12 @@
 #!/usr/bin/env python3
 """Parent-process GNN runtime for batched inference and prior projection.
 
-Handles model loading, hardware acceleration (IPEX/CUDA), batched inference 
+Handles model loading, hardware acceleration (CUDA), batched inference 
 over Z/X memories, and projecting joint faults down to graded per-basis priors.
 """
 
 import gc
 import os
-import numpy as np
-import torch
-from tqdm import tqdm
-
-from gnn_model import BipartiteGNN
-
-try:
-    import intel_extension_for_pytorch
-except ImportError:
-    pass
 
 # Restrict BLAS threads to prevent multiprocessing CPU thrashing
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -24,6 +14,12 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+import numpy as np
+import torch
+from tqdm import tqdm
+
+from gnn_model import BipartiteGNN
 
 # Hardware detection and mixed precision setup
 if hasattr(torch, "xpu") and torch.xpu.is_available():
@@ -61,9 +57,9 @@ def load_gnn_models(code_id, num_layers, h_dim, weights_z, weights_x,
                     gnn_batch, d_joint_z, d_joint_x):
     """Loads and compiles the Z and X memory joint GNNs."""
     if weights_z is None:
-        weights_z = f"weights{code_id}/gnn_joint_Z_L{num_layers}_H{h_dim}_best.pt"
+        weights_z = f"weights{code_id}/gnn_joint_Z_L{num_layers}_H{h_dim}_s0_best.pt"
     if weights_x is None:
-        weights_x = f"weights{code_id}/gnn_joint_X_L{num_layers}_H{h_dim}_best.pt"
+        weights_x = f"weights{code_id}/gnn_joint_X_L{num_layers}_H{h_dim}_s0_best.pt"
 
     for basis, weights_path in (("Z", weights_z), ("X", weights_x)):
         if not os.path.exists(weights_path):
@@ -91,13 +87,7 @@ def load_gnn_models(code_id, num_layers, h_dim, weights_z, weights_x,
         model._ensure_sparse(device)
 
         # Apply hardware-specific compiler optimizations
-        if device.type == "xpu":
-            try:
-                import intel_extension_for_pytorch as ipex
-                model = ipex.optimize(model, dtype=amp_data_type)
-            except Exception as e:
-                print(f"[{basis}] IPEX optimization bypassed: {e}")
-        elif device.type == "cuda":
+        if device.type == "cuda":
             try:
                 model = torch.compile(model, mode="reduce-overhead")
             except Exception:

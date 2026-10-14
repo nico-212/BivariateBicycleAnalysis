@@ -1,21 +1,13 @@
-# Python Virtual Environments
+# virtual environments
 venv/
+.venv/
 env/
+*-venv/
 
-# Python Cache
+# python bytecode
 __pycache__/
-*.pyc
+*.py[cod]
 
-# Generated Offline Matrices
+# pipeline output written into the working directory
 *_cycle_*/
-*.npz
-*.npy
-
-# 1. Ignore ALL csvs and pngs everywhere by default (keeps root clean)
-*.csv
-*.png
-
-# 2. BUT explicitly allow Git to track the official folder!
-!final_results/
-!final_results/*.csv
-!final_results/*.png
+*_fails.npy

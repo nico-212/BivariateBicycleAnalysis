@@ -11,7 +11,9 @@ convergence without overconfidence.
 """
 
 import argparse
+import json
 import os
+import time
 
 import numpy as np
 import scipy.sparse as sp
@@ -22,11 +24,6 @@ from tqdm import tqdm
 
 import offline_stage as od
 from gnn_model import BipartiteGNN
-
-try:
-    import intel_extension_for_pytorch
-except ImportError:
-    pass
 
 DEFAULT_EPOCHS = 20
 DEFAULT_CHECKPOINT_EVERY = 5
@@ -66,16 +63,19 @@ def free_memory_bytes():
 
 
 def generate_joint_batches(d_joint, base_probs, batch_size, batches_per_epoch,
-                           p_artifact, p_min=DEFAULT_P_MIN, p_max=DEFAULT_P_MAX):
+                           p_artifact, p_min=DEFAULT_P_MIN, p_max=DEFAULT_P_MAX, rng=None):
     """Synthesizes (syndromes, faults) batches on the fly using Bernoulli sampling."""
+    if rng is None:
+        rng = np.random.default_rng()
+        
     n_faults = len(base_probs)
     d_joint_t = d_joint.T.tocsr()
 
     for _ in range(batches_per_epoch):
-        p_batch = np.random.uniform(p_min, p_max)
+        p_batch = rng.uniform(p_min, p_max)
         batch_probs = np.clip(base_probs * (p_batch / p_artifact), 0.0, 0.5)
 
-        faults = (np.random.rand(batch_size, n_faults) < batch_probs).astype(np.float32)
+        faults = (rng.random((batch_size, n_faults)) < batch_probs).astype(np.float32)
         syndromes = (faults @ d_joint_t) % 2
 
         yield (torch.tensor(syndromes, dtype=torch.float32), 
@@ -96,9 +96,13 @@ def main(argv=None):
     ap.add_argument("--basis", type=str, choices=("Z", "X"), default="Z")
     ap.add_argument("--num-layers", type=int, default=4)
     ap.add_argument("--h-dim", type=int, default=16)
+    ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
 
     assert 0 < args.p_min < args.p_max <= 0.5, (args.p_min, args.p_max)
+
+    np_rng = np.random.default_rng(args.seed)
+    torch.manual_seed(args.seed)
 
     data_dir = od.artifact_dir(args.code, args.p, args.cycles)
     l, m, k, d = od.CODE_PARAMS[args.code]
@@ -130,30 +134,41 @@ def main(argv=None):
                          default=1)
         accum_steps = (DEFAULT_BATCH_SIZE * DEFAULT_ACCUM_STEPS) // batch_size
 
-    print(f"Train {args.basis}-Mem [[{n},{k},{d}]] p={args.p} cyc={args.cycles} | "
-          f"Graph: {n_det}x{n_fault} ({device.type.upper()}) | "
-          f"GNN: {args.num_layers}L/{args.h_dim}H | "
-          f"Noise: U({args.p_min},{args.p_max}) | Batch: {batch_size}x{accum_steps}")
-    
-    if args.batch is None and batch_size != DEFAULT_BATCH_SIZE:
-        print(f"WARN: batch auto-scaled to {batch_size} (device memory budget)")
-
     model = BipartiteGNN(n_det=n_det, n_fault=n_fault,
                          edges_det=d_joint.row, edges_fault=d_joint.col,
                          h_dim=args.h_dim, num_layers=args.num_layers).to(device)
+                         
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print(f"Train JOINT {args.basis}-Mem [[{n},{k},{d}]] p={args.p} cyc={args.cycles} | "
+          f"Graph: {n_det}x{n_fault} ({device.type.upper()}) | "
+          f"GNN: {args.num_layers}L/{args.h_dim}H, {n_params:,} params | "
+          f"Noise: U({args.p_min},{args.p_max}) | Batch: {batch_size}x{accum_steps} | "
+          f"seed {args.seed}")
+    
+    if args.batch is None and batch_size != DEFAULT_BATCH_SIZE:
+        print(f"WARN: batch auto-scaled to {batch_size} (device memory budget)")
 
     optimizer = optim.AdamW(model.parameters(), lr=DEFAULT_LR, weight_decay=DEFAULT_WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5)
     
     # Standard, unweighted BCE Loss
     criterion = nn.BCEWithLogitsLoss()
-
     scaler = torch.amp.GradScaler(device.type, enabled=use_amp)
 
     weights_dir = f"weights{args.code}"
-    arch_tag = f"{args.basis}_L{args.num_layers}_H{args.h_dim}"
     os.makedirs(weights_dir, exist_ok=True)
+    
+    tag = f"{args.basis}_L{args.num_layers}_H{args.h_dim}_s{args.seed}"
+    best_path = f"{weights_dir}/gnn_joint_{tag}_best.pt"
+    log_path = f"{weights_dir}/gnn_joint_{tag}_log.csv"
+    meta_path = f"{weights_dir}/gnn_joint_{tag}_meta.json"
+    
     best_loss = float("inf")
+    t_start = time.time()
+    
+    with open(log_path, "w") as log:
+        log.write("epoch,avg_loss,lr,elapsed_s\n")
 
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -161,7 +176,7 @@ def main(argv=None):
 
         generator = generate_joint_batches(d_joint, base_probs, batch_size,
                                            args.batches_per_epoch, p_artifact=args.p,
-                                           p_min=args.p_min, p_max=args.p_max)
+                                           p_min=args.p_min, p_max=args.p_max, rng=np_rng)
         
         pbar = tqdm(generator, total=args.batches_per_epoch, desc=f"Epoch {epoch}/{args.epochs}")
 
@@ -190,20 +205,31 @@ def main(argv=None):
 
         avg_loss = epoch_loss / args.batches_per_epoch
         scheduler.step(avg_loss)
-        print(f"Epoch {epoch} | loss: {avg_loss:.5f} | lr: {optimizer.param_groups[0]['lr']:.6f}")
+        lr_now = optimizer.param_groups[0]["lr"]
+        elapsed = time.time() - t_start
+        
+        print(f"Epoch {epoch} | loss: {avg_loss:.5f} | lr: {lr_now:.6f} | {elapsed/60:.1f} min")
+        with open(log_path, "a") as log:
+            log.write(f"{epoch},{avg_loss:.6f},{lr_now:.6f},{elapsed:.1f}\n")
 
         if avg_loss < best_loss:
             best_loss = avg_loss
-            save_path = f"{weights_dir}/gnn_joint_{arch_tag}_best.pt"
-            torch.save(model.state_dict(), save_path)
-            print(f"Best {args.basis} -> {save_path}")
+            torch.save(model.state_dict(), best_path)
+            print(f"Best {args.basis} -> {best_path}")
 
         if epoch % DEFAULT_CHECKPOINT_EVERY == 0:
-            checkpoint_path = f"{weights_dir}/gnn_joint_{arch_tag}_epoch_{epoch}.pt"
+            checkpoint_path = f"{weights_dir}/gnn_joint_{tag}_epoch_{epoch}.pt"
             torch.save(model.state_dict(), checkpoint_path)
 
-    print(f"Done: {args.basis}-mem model")
-
+    total = time.time() - t_start
+    meta = dict(vars(args), n_det=n_det, n_fault=n_fault, n_params=n_params,
+                batch_size=batch_size, accum_steps=accum_steps,
+                best_loss=best_loss, train_seconds=total, device=device.type,
+                data_dir=data_dir)
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+        
+    print(f"Done: joint {args.basis}-mem model in {total/60:.1f} min -> {best_path}")
 
 if __name__ == "__main__":
     main()

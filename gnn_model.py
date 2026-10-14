@@ -1,5 +1,13 @@
+import warnings
+
 import torch
 import torch.nn as nn
+
+# Torch announces its sparse-tensor caveats once per process: the invariant
+# checks are off by default, and CSR support is in beta. Opt out of the checks
+# explicitly and drop the beta notice, so a run prints only its own output.
+torch.sparse.check_sparse_tensor_invariants.disable()
+warnings.filterwarnings("ignore", message="Sparse CSR tensor support is in beta state")
 
 
 class BipartiteGNN(nn.Module):
